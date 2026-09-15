@@ -384,18 +384,20 @@ class CLIBridgeBackend(BridgeBackend):
             output_json = os.path.join(self._ipc_dir, f"out_{task_id}.json")
             escaped_out_path = output_json.replace("\\", "/")
 
+            encoded_script = json.dumps(script)
             wrapper_jsx = f"""(function() {{
     var __out = new File("{escaped_out_path}");
     try {{
-        var __raw = (function() {{
-{script}
-        }})();
+        if (!__out.parent.exists) {{
+            __out.parent.create();
+        }}
+        var __raw = eval({encoded_script});
         __out.encoding = "UTF-8";
         __out.open("w");
         if (__raw !== undefined && __raw !== null) {{
             __out.write(typeof __raw === "string" ? __raw : String(__raw));
         }} else {{
-            __out.write("");
+            __out.write('{{"status":"success","result":null}}');
         }}
         __out.close();
     }} catch (err) {{
@@ -414,15 +416,15 @@ class CLIBridgeBackend(BridgeBackend):
                     f.write(wrapper_jsx)
 
                 try:
-                    subprocess.run(
+                    p = subprocess.Popen(
                         [self.ae_path, "-r", input_jsx],
-                        capture_output=True,
-                        text=True,
-                        timeout=min(effective_timeout, 10.0),
-                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                     )
-                except subprocess.TimeoutExpired:
-                    pass
+                    try:
+                        p.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        pass
                 except Exception as e:
                     raise AEBridgeError(f"Failed to invoke AfterFX.exe: {e}") from e
 
@@ -433,7 +435,8 @@ class CLIBridgeBackend(BridgeBackend):
                         try:
                             with open(output_json, "r", encoding="utf-8") as out_f:
                                 content = out_f.read()
-                            return content
+                            if content.strip():
+                                return content
                         except Exception:
                             pass
                     time.sleep(0.1)

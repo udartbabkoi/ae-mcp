@@ -173,21 +173,23 @@ def test_cli_backend_execute_success(monkeypatch, tmp_path):
 
     backend = CLIBridgeBackend(ae_path=str(fake_ae), default_timeout=5.0)
 
-    def mock_subprocess_run(cmd, capture_output=True, text=True, timeout=10.0, check=False):
-        # cmd = [ae_path, "-r", input_jsx]
-        input_jsx_path = cmd[2]
-        # Inspect input_jsx to find output_json path
-        with open(input_jsx_path, "r", encoding="utf-8") as f:
-            jsx_content = f.read()
-        import re
-        m = re.search(r'new File\("([^"]+)"\)', jsx_content)
-        if m:
-            out_path = m.group(1)
-            with open(out_path, "w", encoding="utf-8") as out_f:
-                out_f.write(json.dumps({"status": "success", "result": 12345}))
-        return subprocess.CompletedProcess(args=cmd, returncode=0)
+    class MockPopen:
+        def __init__(self, cmd, stdout=None, stderr=None):
+            # cmd = [ae_path, "-r", input_jsx]
+            input_jsx_path = cmd[2]
+            with open(input_jsx_path, "r", encoding="utf-8") as f:
+                jsx_content = f.read()
+            import re
+            m = re.search(r'new File\("([^"]+)"\)', jsx_content)
+            if m:
+                out_path = m.group(1)
+                with open(out_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(json.dumps({"status": "success", "result": 12345}))
 
-    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", MockPopen)
 
     res = backend.execute("return 12345;", timeout=5.0)
     assert res is not None
