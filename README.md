@@ -134,21 +134,51 @@ Add `ae-mcp` to your Claude Desktop configuration file:
 }
 ```
 
-### 2. Antigravity MCP Setup
+### 2. Antigravity Configuration
 
-Add `ae-mcp` to your Antigravity configuration (`%USERPROFILE%\.gemini\antigravity\mcp.json` or workspace configuration):
+Add `ae-mcp` to your Antigravity global MCP configuration (`%USERPROFILE%\.gemini\config\mcp_config.json`):
 
 ```json
 {
   "mcpServers": {
     "ae-mcp": {
       "command": "python",
-      "args": ["c:/a1randomshit/ae-mcp/server.py"],
+      "args": [
+        "-u",
+        "c:/a1randomshit/ae-mcp/server.py"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
+```
+
+And enable the plugin in `%USERPROFILE%\.gemini\config\config.json`:
+
+```json
+{
+  "plugins": {
+    "ae-mcp": {
       "enabled": true
     }
   }
 }
 ```
+
+### 3. After Effects In-App Installation (Panel & Startup Script)
+
+Install the dockable ScriptUI Panel and startup script directly into Adobe After Effects:
+
+```powershell
+python scripts/install_ae.py
+```
+
+This installs:
+- **`ScriptUI Panels/ae-mcp.jsx`**: Open via **Window > ae-mcp.jsx** in After Effects. Provides a native dockable panel displaying active composition status, bridge ping diagnostics, and security settings.
+- **`Startup/ae-mcp-startup.jsx`**: Runs automatically when After Effects starts, ensuring the `%TEMP%\ae_mcp_ipc` channel is ready and recording session state.
+
 
 ---
 
