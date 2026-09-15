@@ -1,0 +1,43 @@
+# Python Bytecode & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+dist/
+build/
+*.egg-info/
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary generated sequences & audio
+temp_mattes/
+temp_audio/
+*.wav
+*.mp4
+*.mov
+*.png
+!tests/fixtures/*.png
+!tests/fixtures/*.wav
+
+# Windows & OS
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# After Effects Temp Caches
+*.aep~
+*.aepx~
+*.aep.bak
