@@ -12,6 +12,8 @@ import time
 import queue
 import logging
 import threading
+import subprocess
+import tempfile
 from typing import Any, Dict, Optional, Tuple, Union
 
 try:
@@ -259,6 +261,212 @@ class COMBridgeBackend(BridgeBackend):
         return self._dispatch_task("execute", payload=script, timeout=timeout)
 
 
+def find_afterfx_executable() -> Optional[str]:
+    """Auto-detect AfterFX.exe location via env, registry, or standard directories."""
+    env_path = os.environ.get("AFTER_EFFECTS_PATH")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    if sys.platform == "win32":
+        try:
+            import winreg
+            for reg_sub in [
+                r"AfterEffects.Project.25\protocol\StdFileEditing\server",
+                r"AfterEffects.Project.24\protocol\StdFileEditing\server",
+                r"AfterEffects.Project.23\protocol\StdFileEditing\server",
+                r"AfterEffects.Project\protocol\StdFileEditing\server",
+            ]:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, reg_sub) as key:
+                        val, _ = winreg.QueryValueEx(key, "")
+                        if val and os.path.isfile(val):
+                            return val
+                except (FileNotFoundError, OSError):
+                    continue
+        except Exception:
+            pass
+
+    candidates = [
+        r"C:\Program Files\Adobe\Adobe After Effects 2025\Support Files\AfterFX.exe",
+        r"C:\Program Files\Adobe\Adobe After Effects 2024\Support Files\AfterFX.exe",
+        r"C:\Program Files\Adobe\Adobe After Effects 2023\Support Files\AfterFX.exe",
+        r"C:\Program Files\Adobe\Adobe After Effects 2022\Support Files\AfterFX.exe",
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def is_ae_running() -> bool:
+    """Check if After Effects (AfterFX.exe) process is currently running."""
+    try:
+        import psutil
+        for proc in psutil.process_iter(["name"]):
+            name = proc.info.get("name")
+            if name and "afterfx" in name.lower():
+                return True
+    except Exception:
+        try:
+            res = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq AfterFX.exe"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            return "AfterFX.exe" in res.stdout
+        except Exception:
+            pass
+    return False
+
+
+class CLIBridgeBackend(BridgeBackend):
+    """
+    Production-grade Windows CLI IPC bridge for Adobe After Effects.
+    Communicates with AfterFX.exe using the '-r' flag and atomic temporary files
+    for ExtendScript execution and JSON result retrieval.
+    """
+
+    DEFAULT_TIMEOUT: float = 15.0
+
+    def __init__(self, ae_path: Optional[str] = None, default_timeout: float = DEFAULT_TIMEOUT):
+        self.ae_path = ae_path or find_afterfx_executable()
+        self.default_timeout = default_timeout
+        self._version_cache: Optional[str] = None
+        self._lock = threading.Lock()
+        self._ipc_dir = os.path.join(tempfile.gettempdir(), "ae_mcp_ipc")
+        os.makedirs(self._ipc_dir, exist_ok=True)
+
+    def connect(self) -> None:
+        if not self.is_alive():
+            raise AENotRunningError(
+                "Adobe After Effects is not currently running. "
+                "Please launch Adobe After Effects and open a composition."
+            )
+
+    def disconnect(self) -> None:
+        pass
+
+    def is_alive(self) -> bool:
+        return is_ae_running()
+
+    def get_version(self) -> str:
+        if self._version_cache:
+            return self._version_cache
+        if self.is_alive():
+            try:
+                res = self.execute("return app.version;", timeout=5.0)
+                if res and res.strip():
+                    self._version_cache = res.strip().strip('"')
+                    return self._version_cache
+            except Exception:
+                pass
+        return "25.0"
+
+    def execute(self, script: str, timeout: Optional[float] = None) -> str:
+        effective_timeout = timeout if timeout is not None else self.default_timeout
+
+        if not self.is_alive():
+            raise AENotRunningError(
+                "Adobe After Effects is not currently running. "
+                "Please launch Adobe After Effects and open a composition."
+            )
+
+        if not self.ae_path or not os.path.isfile(self.ae_path):
+            raise AENotRunningError(
+                f"After Effects executable not found at: {self.ae_path}. "
+                "Please verify your Adobe After Effects installation."
+            )
+
+        with self._lock:
+            task_id = f"{int(time.time() * 1000)}_{threading.get_ident()}"
+            input_jsx = os.path.join(self._ipc_dir, f"cmd_{task_id}.jsx")
+            output_json = os.path.join(self._ipc_dir, f"out_{task_id}.json")
+            escaped_out_path = output_json.replace("\\", "/")
+
+            wrapper_jsx = f"""(function() {{
+    var __out = new File("{escaped_out_path}");
+    try {{
+        var __raw = (function() {{
+{script}
+        }})();
+        __out.encoding = "UTF-8";
+        __out.open("w");
+        if (__raw !== undefined && __raw !== null) {{
+            __out.write(typeof __raw === "string" ? __raw : String(__raw));
+        }} else {{
+            __out.write("");
+        }}
+        __out.close();
+    }} catch (err) {{
+        try {{
+            __out.encoding = "UTF-8";
+            __out.open("w");
+            var cleanErr = err.toString().replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
+            __out.write('{{"status":"error","message":"' + cleanErr + '"}}');
+            __out.close();
+        }} catch(e) {{}}
+    }}
+}})();
+"""
+            try:
+                with open(input_jsx, "w", encoding="utf-8") as f:
+                    f.write(wrapper_jsx)
+
+                try:
+                    subprocess.run(
+                        [self.ae_path, "-r", input_jsx],
+                        capture_output=True,
+                        text=True,
+                        timeout=min(effective_timeout, 10.0),
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired:
+                    pass
+                except Exception as e:
+                    raise AEBridgeError(f"Failed to invoke AfterFX.exe: {e}") from e
+
+                start_time = time.time()
+                while time.time() - start_time < effective_timeout:
+                    if os.path.isfile(output_json) and os.path.getsize(output_json) > 0:
+                        time.sleep(0.05)
+                        try:
+                            with open(output_json, "r", encoding="utf-8") as out_f:
+                                content = out_f.read()
+                            return content
+                        except Exception:
+                            pass
+                    time.sleep(0.1)
+
+                raise AETimeoutError(
+                    f"After Effects did not respond within {effective_timeout}s. "
+                    "Ensure 'Allow Scripts to Write Files and Access Network' is enabled in "
+                    "Edit > Preferences > Scripting & Expressions, and check for open modal dialogs."
+                )
+            finally:
+                for p in (input_jsx, output_json):
+                    if os.path.isfile(p):
+                        try:
+                            os.remove(p)
+                        except OSError:
+                            pass
+
+
+def create_default_backend() -> BridgeBackend:
+    """
+    Auto-detect the optimal execution backend for the current environment.
+    Uses COM if registered, otherwise falls back to the native Windows CLI IPC backend.
+    """
+    if HAS_PYWIN32:
+        try:
+            import win32com.client
+            _ = win32com.client.Dispatch("AfterEffects.Application")
+            return COMBridgeBackend()
+        except Exception:
+            pass
+    return CLIBridgeBackend()
+
+
 class AEDispatcher:
     """
     High-level After Effects dispatcher and ExtendScript execution manager.
@@ -267,7 +475,7 @@ class AEDispatcher:
     """
 
     def __init__(self, backend: Optional[BridgeBackend] = None):
-        self.backend: BridgeBackend = backend or COMBridgeBackend()
+        self.backend: BridgeBackend = backend or create_default_backend()
 
     def execute_with_undo(
         self,

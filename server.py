@@ -24,7 +24,7 @@ from bridge.backend import (
     AEScriptExecutionError,
     AECOMError,
 )
-from bridge.ae_dispatch import COMBridgeBackend, AEDispatcher
+from bridge.ae_dispatch import COMBridgeBackend, CLIBridgeBackend, AEDispatcher, create_default_backend
 from bridge.audio import analyze_audio
 from bridge.vision import extract_and_segment_frames, build_track_matte_extendscript
 from extendscript import get_json2_source, get_dom_helpers_source, build_bundled_script
@@ -48,7 +48,7 @@ def get_dispatcher() -> AEDispatcher:
     """Retrieve or initialize the active AE dispatcher."""
     global _dispatcher
     if _dispatcher is None:
-        backend = COMBridgeBackend()
+        backend = create_default_backend()
         _dispatcher = AEDispatcher(backend=backend)
     return _dispatcher
 

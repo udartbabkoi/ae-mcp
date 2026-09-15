@@ -11,7 +11,14 @@ from .backend import (
     AEScriptExecutionError,
     AECOMError,
 )
-from .ae_dispatch import COMBridgeBackend, AEDispatcher
+from .ae_dispatch import (
+    COMBridgeBackend,
+    CLIBridgeBackend,
+    AEDispatcher,
+    create_default_backend,
+    find_afterfx_executable,
+    is_ae_running,
+)
 from .audio import analyze_audio, compute_rms_envelope, detect_tempo_and_onsets
 from .vision import extract_and_segment_frames, build_track_matte_extendscript
 
@@ -23,7 +30,11 @@ __all__ = [
     "AEScriptExecutionError",
     "AECOMError",
     "COMBridgeBackend",
+    "CLIBridgeBackend",
     "AEDispatcher",
+    "create_default_backend",
+    "find_afterfx_executable",
+    "is_ae_running",
     "analyze_audio",
     "compute_rms_envelope",
     "detect_tempo_and_onsets",

@@ -49,8 +49,10 @@ A production-grade, end-to-end [Model Context Protocol (MCP)](https://modelconte
 
 ### Key Architectural Pillars
 
-1. **Thread-Safe STA COM Dispatcher (`bridge/ae_dispatch.py`)**:
-   Runs all Win32 COM calls (`win32com.client.Dispatch("AfterEffects.Application")`) inside a dedicated Single-Threaded Apartment (STA) worker thread with `pythoncom.CoInitialize()`. Enforces strict timeout handling (default 15s) to detect and gracefully bubble modal dialogs or UI hangs rather than freezing the MCP server.
+1. **Dual-Backend Windows IPC (`bridge/ae_dispatch.py`)**:
+   - **`CLIBridgeBackend` (Default)**: Leverages After Effects' native `AfterFX.exe -r <script.jsx>` execution flag with an atomic temporary file channel for bidirectional JSON data exchange. Because standard After Effects does not register an `AfterEffects.Application` COM ProgID, this provides reliable zero-config IPC without app restarts.
+   - **`COMBridgeBackend`**: Available when a COM bridge proxy is registered, running all COM calls inside a dedicated Single-Threaded Apartment (STA) worker thread with `pythoncom.CoInitialize()`.
+   - Both backends enforce strict timeout handling (default 15s) to detect and gracefully bubble modal dialogs or UI hangs rather than freezing the MCP server.
 
 2. **Abstract Bridge Backend (`bridge/backend.py`)**:
    Abstracts script execution behind `BridgeBackend`, allowing alternative execution mechanisms (e.g. WebSocket or CEP panel relays) without altering server logic.
